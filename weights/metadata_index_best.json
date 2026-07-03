@@ -1,0 +1,20 @@
+{
+  "index": "上证指数",
+  "symbol": "sh000001",
+  "algorithm": "Q-learning",
+  "reward_function": "幅度(无摩擦)",
+  "data_range": "2022-06-23~2026-07-03",
+  "n_episodes": 1000,
+  "alpha": 0.01,
+  "gamma": 0.99,
+  "seed": 42,
+  "backtest_return": 43.93627999999995,
+  "buy_hold_return": 21.79100998178094,
+  "excess_return": 22.145270018219005,
+  "trade_distribution": {
+    "buy": 125,
+    "sell": 387,
+    "hold": 444
+  },
+  "saved_at": "2026-07-03 22:14:50.625119"
+}
