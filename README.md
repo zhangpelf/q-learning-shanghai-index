@@ -215,6 +215,182 @@ q-learning-shanghai-index/
 4. **36 个参数足够**：当状态空间只有 1 维（涨跌幅）× 12 个 bin 时，无需神经网络
 5. **不同资产需不同奖励**：对比个股策略（不对称奖励买入×3/卖出×1），指数最优是无摩擦比例奖励——奖励函数必须匹配资产的趋势结构
 
+## QLens Agent — AI 市场分析助手
+
+> 基于 Google ADK (Agent Development Kit) 构建的 LLM Agent，连接到本地的 Q-Learning 模型服务，用自然语言回答市场预测相关的问题。
+
+QLens Agent 是一个 LLM Agent，它连接你的本地 Q-Learning 模型服务（端口 8765），能够：
+
+- 📊 **自动获取最新 dashboard**：每次对话前自动注入模型 dashboard 数据，LLM 无需额外调用工具即可感知市场状态
+- 🔮 **生成新预测**：通过 `generate_prediction` 工具触发模型生成最新的买/卖/持有信号
+- 📈 **评估历史预测**：通过 `evaluate_pending` 工具检查过去预测的准确率和模型奖励更新
+- 🗣️ **自然语言交互**：用中文对话即可了解市场信号、Q 值、置信度等
+
+### 系统架构
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    QLens Agent (app/)                    │
+│                                                         │
+│  ┌─────────────┐    ┌──────────────────────────────┐   │
+│  │  FastAPI     │    │  ADK Agent                   │   │
+│  │  (端口 8080)  │    │                              │   │
+│  │  · ADK API   │───▶│  · before_model_callback    │   │
+│  │  · A2A JSON- │    │    (自动注入 dashboard)      │   │
+│  │    RPC       │    │  · tools:                   │   │
+│  │  · /feedback │    │    - generate_prediction    │   │
+│  └─────────────┘    │    - evaluate_pending        │   │
+│                     └───────┬──────────────────────┘   │
+│                             │                           │
+│                     ┌───────▼──────────────────────┐   │
+│                     │  LLM Router (端口 8046)        │   │
+│                     │  · model: gpt-4o-mini         │   │
+│                     └──────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+         │
+         ▼  HTTP (localhost)
+┌─────────────────────────────────────────────────────────┐
+│              Q-Learning Model Server (端口 8765)          │
+│  · /api/dashboard  — 获取最新 dashboard                  │
+│  · /api/predict    — 生成新预测                           │
+│  · /api/evaluate   — 评估待定预测                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Prerequisites
+
+QLens Agent 依赖两个本地服务：
+
+| 服务            | 端口  | 说明                              |
+|---------------|------|---------------------------------|
+| LLM Router    | 8046 | OpenAI 兼容的 LLM 路由（Qwen32B 等）    |
+| Market API    | 8765 | Q-Learning 模型服务（运行训练好的 Q 表权重）  |
+
+确保这两个服务在运行后再启动 Agent。
+
+### 快速开始
+
+```bash
+# 1. 安装 uv（如果尚未安装）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. 同步依赖
+cd app
+uv sync
+
+# 3. 配置环境变量
+cp .env.example .env
+# 编辑 .env，填入 OPENAI_API_KEY 等配置
+
+# 4. 启动 Agent（开发模式）
+uv run uvicorn app.fast_api_app:app --reload --port 8080
+
+# 5. 访问 API
+#    · Swagger UI:          http://localhost:8080/docs
+#    · ADK Web UI:          http://localhost:8080/
+#    · Agent Card (A2A):    http://localhost:8080/a2a/app/.well-known/agent-card
+```
+
+### 测试
+
+```bash
+# 运行 E2E 测试（InMemorySessionService，不依赖外部服务）
+uv run pytest tests/ -v
+```
+
+测试使用 `InMemorySessionService`，不依赖 Market API 或 LLM Router，仅验证 Agent 定义和工具注册是否正确。
+
+### 环境变量
+
+| 变量                     | 默认值                          | 说明                               |
+|------------------------|--------------------------------|----------------------------------|
+| `OPENAI_BASE_URL`      | `http://127.0.0.1:8046/v1`    | LLM Router 地址                    |
+| `OPENAI_API_KEY`       | —                              | API Key（必填）                      |
+| `MARKET_API_BASE`      | `http://127.0.0.1:8765`       | Q-Learning 模型服务地址               |
+| `GOOGLE_CLOUD_PROJECT` | —                              | GCP 项目 ID（部署时必填）               |
+| `GOOGLE_CLOUD_LOCATION`| `global`                       | GCP 区域                            |
+| `LOGS_BUCKET_NAME`     | —                              | GCS bucket（用于 prompt-response 日志） |
+| `APP_URL`              | `http://0.0.0.0:8000`         | A2A Agent Card 公布的 URL            |
+
+### API 端点
+
+| 端点                                      | 方法   | 说明                    |
+|------------------------------------------|------|-----------------------|
+| `/`                                      | GET  | ADK Web UI             |
+| `/api/`                                  | GET  | ADK API 根路径           |
+| `/a2a/app/.well-known/agent-card`        | GET  | A2A Agent Card（用于注册）  |
+| `/a2a/app`                               | POST | A2A JSON-RPC 端点       |
+| `/feedback`                              | POST | 收集用户反馈               |
+| `/docs`                                  | GET  | Swagger UI 文档         |
+
+### Agent 工具
+
+| 工具                    | 说明                              |
+|-----------------------|---------------------------------|
+| `get_dashboard`       | 获取最新 dashboard（含信号、Q 值、模型性能）    |
+| `generate_prediction` | 触发 Q-Learning 模型生成新预测            |
+| `evaluate_pending`    | 评估过去的预测是否准确，更新模型奖励             |
+
+注：每次 LLM 调用前，`before_model_callback` 会自动获取并注入 dashboard 数据到系统提示中，因此无需显式调用 `get_dashboard`。
+
+### 部署选项
+
+#### 方式一：Agent Registry（推荐）
+
+```bash
+# 构建 Docker 镜像并推送
+docker build -t gcr.io/your-project/qlens-agent:latest .
+docker push gcr.io/your-project/qlens-agent:latest
+
+# 部署到 Cloud Run
+gcloud run deploy qlens-agent \
+  --image gcr.io/your-project/qlens-agent:latest \
+  --port 8080 \
+  --execution-environment gen2 \
+  --set-env-vars "OPENAI_BASE_URL=...,OPENAI_API_KEY=...,MARKET_API_BASE=..."
+
+# 发布到 Agent Registry
+agents-cli publish gemini-enterprise
+```
+
+部署后 Agent 可通过 A2A 协议被 Gemini Enterprise 或其他 A2A 客户端调用。
+
+#### 方式二：Cloudflare Tunnel（公开访问）
+
+如果想把本地开发的 Agent 临时暴露到公网（例如给朋友测试），可以使用 Cloudflare Tunnel：
+
+```bash
+# 安装 cloudflared
+brew install cloudflared
+
+# 创建 Tunnel（指向本地 8080）
+cloudflared tunnel --url http://localhost:8080
+```
+
+这会生成一个 `https://xxx.trycloudflare.com` 的公开 URL。把此 URL 设为 `APP_URL`，即可让 Agent Card 指向公网地址。
+
+### 项目结构
+
+```
+app/                          ← QLens Agent 代码
+├── agent.py                  # Agent 定义 + before_model_callback
+├── tools.py                  # 工具函数（dashboard, predict, evaluate）
+├── fast_api_app.py           # FastAPI 应用入口 + A2A 路由
+├── app_utils/
+│   ├── a2a.py                # A2A 端点注册
+│   ├── services.py           # Session/Artifact 服务
+│   ├── telemetry.py          # OpenTelemetry 遥测
+│   └── typing.py             # Feedback 模型
+├── __init__.py               # 导出 app
+tests/
+├── test_e2e.py               # E2E 测试（InMemorySessionService）
+└── __init__.py
+Dockerfile                    # 容器化部署（uv + uvicorn）
+pyproject.toml                # 依赖和项目元数据
+uv.lock                       # 锁定依赖版本
+.env.example                  # 环境变量模板
+```
+
 ## 相关项目
 
 - 个股版（有研新材 600206）：同期超额 **+205.72%**，使用不对称奖励（买入×3/卖出×1）

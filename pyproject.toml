@@ -1,0 +1,35 @@
+[project]
+name = "qlens-agent"
+version = "0.1.0"
+description = "Q-Learning market prediction analyst agent built with Google ADK"
+requires-python = ">=3.12"
+dependencies = [
+    "google-adk[extensions,gcp]>=2.0.0,<3.0.0",
+    "google-genai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.28.0",
+    "uvicorn>=0.34.0",
+    "google-cloud-logging>=3.0.0",
+    "pydantic>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/zhangpelf/q-learning-shanghai-index"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
